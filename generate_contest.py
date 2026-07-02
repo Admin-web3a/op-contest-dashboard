@@ -58,7 +58,7 @@ CONTEST_START = 1782939600
 # 8 июля 2026 23:59:59 Москва = 8 июля 20:59:59 UTC
 CONTEST_END   = 1783544399
 
-# Менеджеры
+# Менеджеры (Виолетта и Люба убраны — больше не в команде)
 MANAGERS = {
     12377210: "Никита",
     11176694: "Наталья",
@@ -70,9 +70,10 @@ MANAGERS = {
     12738086: "Кирилл",
     11356530: "Денис",
      7728454: "Виктория",
-     6976552: "Виолетта",
-     9596454: "Люба",
 }
+
+# Елена участвует только в «Капиталисте» — в конверсионных номинациях не считается
+CONVERSION_EXCLUDED = {6461602}
 
 # Загружать сделки начиная с (не раньше июня)
 UPDATED_FROM = 1748736000  # 2026-06-01
@@ -172,17 +173,19 @@ def calc_stats(leads):
         cold = is_cold(lead)
         won  = is_won_in_period(lead)
         worked = is_worked(lead)
+        in_conversion = mgr not in CONVERSION_EXCLUDED
 
-        if worked:
+        if worked and in_conversion:
             stats[mgr]["worked"] += 1
             if cold:
                 stats[mgr]["cold_worked"] += 1
 
         if won:
             stats[mgr]["revenue"] += lead.get("price") or 0
-            stats[mgr]["won"] += 1
-            if cold:
-                stats[mgr]["cold_won"] += 1
+            if in_conversion:
+                stats[mgr]["won"] += 1
+                if cold:
+                    stats[mgr]["cold_won"] += 1
 
     return stats
 
@@ -213,9 +216,9 @@ def build_html(stats, updated_at):
     end_dt   = datetime.datetime(2026, 7, 8, 23, 59, 59, tzinfo=datetime.timezone.utc)
     days_left = max(0, (end_dt.date() - now.date()).days)
 
-    # ── Капиталист ──
+    # ── Капиталист ── (включает всех, кто получил хотя бы одну продажу)
     cap_rows = sorted(
-        [(s["name"], s["revenue"], s["won"]) for s in stats.values() if s["worked"] > 0],
+        [(s["name"], s["revenue"], s["won"]) for s in stats.values()],
         key=lambda x: -x[1]
     )
     cap_html = leaderboard_rows([
