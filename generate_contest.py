@@ -90,8 +90,36 @@ def amo_get(path, params=None):
         return json.loads(resp.read())
 
 
+def fetch_won_lead_ids():
+    """Returns set of lead IDs whose status changed to a WON status during the contest period.
+    Uses the events API for precision — this captures the exact moment the deal was won,
+    regardless of whether AMO sets closed_at (which it does not for Внутренняя рассрочка).
+    """
+    won_ids = set()
+    page = 1
+    while True:
+        data = amo_get("/api/v4/events", {
+            "page": page,
+            "limit": 100,
+            "filter[type][]": "lead_status_changed",
+            "filter[created_at][from]": CONTEST_START,
+            "filter[created_at][to]": CONTEST_END,
+        })
+        batch = data.get("_embedded", {}).get("events", [])
+        if not batch:
+            break
+        for event in batch:
+            for va in (event.get("value_after") or []):
+                if va.get("lead_status", {}).get("id") in WON_STATUS_IDS:
+                    won_ids.add(event["entity_id"])
+        if len(batch) < 100:
+            break
+        page += 1
+    return won_ids
+
+
 def fetch_all_leads():
-    """Fetches all leads with eligible source, returns list of lead dicts."""
+    """Fetches all leads updated since UPDATED_FROM."""
     leads = []
     page = 1
     while True:
@@ -132,19 +160,13 @@ def is_cold(lead):
     return not bool(all_sources & WEB_ENUM_IDS)
 
 
-def is_won_in_period(lead):
-    """Lead is won AND closed within contest period.
-    AMO does not set closed_at for 'Внутренняя рассрочка' (78184766),
-    so we fall back to updated_at for that status.
+def is_won_in_period(lead, won_ids):
+    """Lead is won AND its status changed to a won status during the contest period.
+    Uses pre-fetched won_ids from the events API for accuracy.
     """
     if lead.get("status_id") not in WON_STATUS_IDS:
         return False
-    closed = lead.get("closed_at") or 0
-    if closed:
-        return CONTEST_START <= closed <= CONTEST_END
-    # Рассрочка: AMO не ставит closed_at — используем updated_at
-    updated = lead.get("updated_at") or 0
-    return CONTEST_START <= updated <= CONTEST_END
+    return lead["id"] in won_ids
 
 
 def is_worked(lead):
@@ -154,10 +176,11 @@ def is_worked(lead):
 
 # ── Main calculation ────────────────────────────────────────────────────────────
 
-def calc_stats(leads):
+def calc_stats(leads, won_ids):
     """
     Returns per-manager stats:
     {mgr_id: {revenue, won, worked, cold_won, cold_worked, name}}
+    won_ids: set of lead IDs whose status changed to a won status during contest period.
     """
     stats = {}
     for uid, name in MANAGERS.items():
@@ -178,7 +201,7 @@ def calc_stats(leads):
             continue
 
         cold = is_cold(lead)
-        won  = is_won_in_period(lead)
+        won  = is_won_in_period(lead, won_ids)
         worked = is_worked(lead)
         in_conversion = mgr not in CONVERSION_EXCLUDED
 
@@ -342,11 +365,15 @@ def _days_ru(n):
 # ── Entry point ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    print("Fetching won events from AMO…")
+    won_ids = fetch_won_lead_ids()
+    print(f"  Leads moved to won status in period: {len(won_ids)}")
+
     print("Fetching leads from AMO…")
     leads = fetch_all_leads()
     print(f"  Total fetched: {len(leads)}")
 
-    stats = calc_stats(leads)
+    stats = calc_stats(leads, won_ids)
 
     eligible_count = sum(1 for l in leads if is_eligible(l))
     won_count = sum(s["won"] for s in stats.values())
