@@ -133,11 +133,18 @@ def is_cold(lead):
 
 
 def is_won_in_period(lead):
-    """Lead is won AND closed within contest period."""
+    """Lead is won AND closed within contest period.
+    AMO does not set closed_at for 'Внутренняя рассрочка' (78184766),
+    so we fall back to updated_at for that status.
+    """
     if lead.get("status_id") not in WON_STATUS_IDS:
         return False
     closed = lead.get("closed_at") or 0
-    return CONTEST_START <= closed <= CONTEST_END
+    if closed:
+        return CONTEST_START <= closed <= CONTEST_END
+    # Рассрочка: AMO не ставит closed_at — используем updated_at
+    updated = lead.get("updated_at") or 0
+    return CONTEST_START <= updated <= CONTEST_END
 
 
 def is_worked(lead):
