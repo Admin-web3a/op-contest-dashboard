@@ -90,32 +90,8 @@ def amo_get(path, params=None):
         return json.loads(resp.read())
 
 
-def fetch_won_lead_ids():
-    """Returns set of lead IDs whose status changed to a WON status during the contest period.
-    Uses the events API for precision — this captures the exact moment the deal was won,
-    regardless of whether AMO sets closed_at (which it does not for Внутренняя рассрочка).
-    """
-    won_ids = set()
-    page = 1
-    while True:
-        data = amo_get("/api/v4/events", {
-            "page": page,
-            "limit": 100,
-            "filter[type][]": "lead_status_changed",
-            "filter[created_at][from]": CONTEST_START,
-            "filter[created_at][to]": CONTEST_END,
-        })
-        batch = data.get("_embedded", {}).get("events", [])
-        if not batch:
-            break
-        for event in batch:
-            for va in (event.get("value_after") or []):
-                if va.get("lead_status", {}).get("id") in WON_STATUS_IDS:
-                    won_ids.add(event["entity_id"])
-        if len(batch) < 100:
-            break
-        page += 1
-    return won_ids
+# Поле «Дата оплаты» (unix timestamp) — основной критерий попадания в конкурс
+PAYMENT_DATE_FIELD_ID = 1317071
 
 
 def fetch_all_leads():
@@ -160,13 +136,26 @@ def is_cold(lead):
     return not bool(all_sources & WEB_ENUM_IDS)
 
 
-def is_won_in_period(lead, won_ids):
-    """Lead is won AND its status changed to a won status during the contest period.
-    Uses pre-fetched won_ids from the events API for accuracy.
+def get_payment_date(lead):
+    """Returns the unix timestamp from 'Дата оплаты' field, or 0 if not set."""
+    for cf in lead.get("custom_fields_values") or []:
+        if cf["field_id"] == PAYMENT_DATE_FIELD_ID:
+            vals = cf.get("values") or []
+            if vals:
+                return int(vals[0].get("value") or 0)
+    return 0
+
+
+def is_won_in_period(lead):
+    """Lead is won AND payment date falls within the contest period.
+    Uses 'Дата оплаты' (field 1317071) as the single source of truth —
+    this reflects when money was actually received, regardless of when
+    the deal status was changed.
     """
     if lead.get("status_id") not in WON_STATUS_IDS:
         return False
-    return lead["id"] in won_ids
+    paid = get_payment_date(lead)
+    return CONTEST_START <= paid <= CONTEST_END
 
 
 def is_worked(lead):
@@ -176,11 +165,10 @@ def is_worked(lead):
 
 # ── Main calculation ────────────────────────────────────────────────────────────
 
-def calc_stats(leads, won_ids):
+def calc_stats(leads):
     """
     Returns per-manager stats:
     {mgr_id: {revenue, won, worked, cold_won, cold_worked, name}}
-    won_ids: set of lead IDs whose status changed to a won status during contest period.
     """
     stats = {}
     for uid, name in MANAGERS.items():
@@ -201,7 +189,7 @@ def calc_stats(leads, won_ids):
             continue
 
         cold = is_cold(lead)
-        won  = is_won_in_period(lead, won_ids)
+        won  = is_won_in_period(lead)
         worked = is_worked(lead)
         in_conversion = mgr not in CONVERSION_EXCLUDED
 
@@ -365,15 +353,11 @@ def _days_ru(n):
 # ── Entry point ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Fetching won events from AMO…")
-    won_ids = fetch_won_lead_ids()
-    print(f"  Leads moved to won status in period: {len(won_ids)}")
-
     print("Fetching leads from AMO…")
     leads = fetch_all_leads()
     print(f"  Total fetched: {len(leads)}")
 
-    stats = calc_stats(leads, won_ids)
+    stats = calc_stats(leads)
 
     eligible_count = sum(1 for l in leads if is_eligible(l))
     won_count = sum(s["won"] for s in stats.values())
