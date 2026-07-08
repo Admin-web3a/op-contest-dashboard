@@ -174,7 +174,8 @@ def calc_stats(leads):
     for uid, name in MANAGERS.items():
         stats[uid] = {
             "name": name,
-            "revenue": 0,    # Капиталист
+            "revenue": 0,    # Капиталист сумма
+            "sales": 0,      # Капиталист кол-во сделок (все менеджеры)
             "won": 0,        # Снайпер numerator
             "worked": 0,     # Снайпер denominator
             "cold_won": 0,   # Охотник numerator
@@ -200,6 +201,7 @@ def calc_stats(leads):
 
         if won:
             stats[mgr]["revenue"] += lead.get("price") or 0
+            stats[mgr]["sales"] += 1
             if in_conversion:
                 stats[mgr]["won"] += 1
                 if cold:
@@ -234,14 +236,14 @@ def build_html(stats, updated_at):
     end_dt   = datetime.datetime(2026, 7, 8, 23, 59, 59, tzinfo=datetime.timezone.utc)
     days_left = max(0, (end_dt.date() - now.date()).days)
 
-    # ── Капиталист ── (включает всех, кто получил хотя бы одну продажу)
+    # ── Капиталист ── (включает всех менеджеров, sales считается для всех)
     cap_rows = sorted(
-        [(s["name"], s["revenue"], s["won"]) for s in stats.values()],
+        [(s["name"], s["revenue"], s["sales"]) for s in stats.values()],
         key=lambda x: -x[1]
     )
     cap_html = leaderboard_rows([
-        (name, f"{rev:,} ₽".replace(",", " "), f"{won} продаж")
-        for name, rev, won in cap_rows
+        (name, f"{rev:,} ₽".replace(",", " "), f"{sales} продаж")
+        for name, rev, sales in cap_rows
     ])
 
     # ── Снайпер ──
