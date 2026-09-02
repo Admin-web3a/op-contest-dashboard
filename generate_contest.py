@@ -68,7 +68,7 @@ def fetch_all_leads():
         if not batch:
             break
         leads.extend(batch)
-        if len(batch) < 250:
+        if not data.get("_links", {}).get("next"):
             break
         page += 1
     return leads
@@ -395,7 +395,7 @@ if __name__ == "__main__":
     print(f"  Won in period: {won_count}")
 
     os.makedirs("docs", exist_ok=True)
-    html = build_html(stats, datetime.datetime.utcnow())
+    html = build_html(stats, datetime.datetime.now(datetime.timezone.utc))
     with open("docs/index.html", "w", encoding="utf-8") as f:
         f.write(html)
     print(f"  Saved docs/index.html ({len(html):,} bytes)")
